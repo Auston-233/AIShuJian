@@ -1,0 +1,936 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>爱数毽 - AI Shuttlecock Counter</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+
+    <!-- MediaPipe Pose & Camera Utils CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            cyan: '#00f2fe',
+                            green: '#00ff87',
+                            pink: '#ff007f',
+                            dark: '#080c14',
+                            card: 'rgba(15, 23, 42, 0.75)'
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Outfit', 'sans-serif'],
+                        arcade: ['Orbitron', 'sans-serif']
+                    },
+                    boxShadow: {
+                        'neon-cyan': '0 0 20px rgba(0, 242, 254, 0.4)',
+                        'neon-green': '0 0 20px rgba(0, 255, 135, 0.4)'
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body {
+            background-color: #050811;
+            background-image: 
+                radial-gradient(circle at 15% 15%, rgba(0, 242, 254, 0.08) 0%, transparent 40%),
+                radial-gradient(circle at 85% 85%, rgba(255, 0, 127, 0.08) 0%, transparent 40%);
+            background-attachment: fixed;
+            min-height: 100vh;
+            user-select: none;
+        }
+
+        .glass-panel {
+            background: rgba(13, 20, 36, 0.75);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        /* Large glowing HUD text */
+        .hud-text-glow {
+            text-shadow: 0 0 25px rgba(0, 242, 254, 0.6), 0 0 50px rgba(0, 242, 254, 0.3);
+        }
+        .combo-glow {
+            text-shadow: 0 0 20px rgba(0, 255, 135, 0.8);
+        }
+
+        /* Mirror video view for natural interaction */
+        .mirror {
+            transform: scaleX(-1);
+        }
+
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: rgba(0, 0, 0, 0.2);
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body class="text-slate-100 font-sans antialiased flex flex-col min-h-screen">
+
+    <!-- Top Navigation Header -->
+    <header class="sticky top-0 z-40 glass-panel border-b border-white/10 px-4 lg:px-8 py-3">
+        <div class="max-w-7xl mx-auto flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-brand-cyan to-brand-green flex items-center justify-center text-black font-extrabold text-xl shadow-neon-cyan">
+                    <i class="fa-solid fa-person-running"></i>
+                </div>
+                <div>
+                    <h1 class="font-arcade text-sm sm:text-base font-extrabold tracking-wider bg-gradient-to-r from-brand-cyan via-white to-brand-green bg-clip-text text-transparent">
+                        爱数毽
+                    </h1>
+                    <p class="text-[11px] text-slate-400">AI 智能踢毽子计数 & 语音即时播报</p>
+                </div>
+            </div>
+
+            <!-- Status Indicator -->
+            <div class="hidden sm:flex items-center gap-3 px-3 py-1.5 rounded-full bg-black/40 border border-white/10 text-xs">
+                <span id="statusDot" class="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse"></span>
+                <span id="statusText" class="text-slate-300 font-medium">初始化 AI 摄像头...</span>
+                <span id="fpsDisplay" class="font-arcade text-brand-cyan ml-2 text-[10px]">FPS: --</span>
+            </div>
+
+            <!-- Header Quick Action Buttons -->
+            <div class="flex items-center gap-2">
+                <button id="voiceToggleBtn" onclick="toggleVoice()" class="p-2.5 rounded-xl glass-panel hover:bg-white/10 transition text-brand-cyan flex items-center justify-center w-10 h-10" title="切换语音播报">
+                    <i id="voiceIcon" class="fa-solid fa-volume-high text-lg"></i>
+                </button>
+                <button id="soundBfxBtn" onclick="toggleSoundBfx()" class="p-2.5 rounded-xl glass-panel hover:bg-white/10 transition text-brand-green flex items-center justify-center w-10 h-10" title="切换提示音效">
+                    <i id="soundIcon" class="fa-solid fa-bell text-lg"></i>
+                </button>
+                <button onclick="toggleHistoryModal()" class="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-xs font-semibold transition border border-white/10 flex items-center gap-1.5">
+                    <i class="fa-solid fa-trophy text-amber-400"></i>
+                    <span class="hidden sm:inline">运动纪录</span>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Container -->
+    <main class="flex-grow max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+
+        <!-- LEFT/TOP: Live Camera & HUD Viewport (Col 8) -->
+        <section class="lg:col-span-8 flex flex-col gap-4">
+            
+            <!-- Video Container -->
+            <div class="relative w-full aspect-video rounded-3xl overflow-hidden glass-panel border border-white/15 bg-black flex items-center justify-center shadow-2xl">
+                
+                <!-- Hidden Source Video Element -->
+                <video id="webcamVideo" class="hidden" playsinline muted></video>
+
+                <!-- Rendering Canvas Overlay -->
+                <canvas id="outputCanvas" class="w-full h-full object-cover mirror"></canvas>
+
+                <!-- High Impact Distance HUD Overlay (Always Visible on Video) -->
+                <div class="absolute inset-x-0 top-0 p-4 sm:p-6 flex justify-between items-start pointer-events-none">
+                    
+                    <!-- Main Big Count Box -->
+                    <div class="bg-black/60 backdrop-blur-md p-4 sm:p-6 rounded-2xl border border-white/15 flex flex-col justify-center">
+                        <span class="text-[10px] sm:text-xs text-brand-cyan font-bold tracking-widest uppercase">KICK COUNT / 踢毽个数</span>
+                        <div id="hudCount" class="font-arcade text-5xl sm:text-7xl lg:text-8xl font-black text-brand-cyan hud-text-glow leading-none mt-1">
+                            0
+                        </div>
+                    </div>
+
+                    <!-- Right Stats Badge Column -->
+                    <div class="flex flex-col gap-2 items-end">
+                        <div class="bg-black/60 backdrop-blur-md px-3 py-2 rounded-xl border border-white/15 text-right">
+                            <div class="text-[10px] text-slate-400 font-bold">BEST RECORD</div>
+                            <div id="hudBest" class="font-arcade text-xl sm:text-2xl font-bold text-amber-400">0</div>
+                        </div>
+
+                        <div class="bg-black/60 backdrop-blur-md px-3 py-2 rounded-xl border border-white/15 text-right">
+                            <div class="text-[10px] text-slate-400 font-bold">TIMER</div>
+                            <div id="hudTimer" class="font-arcade text-xl sm:text-2xl font-bold text-slate-200">00:00</div>
+                        </div>
+
+                        <!-- Dynamic Combo Indicator -->
+                        <div id="comboBadge" class="hidden bg-gradient-to-r from-brand-green/30 to-brand-cyan/30 backdrop-blur-md px-3 py-1.5 rounded-xl border border-brand-green/50 text-right animate-bounce">
+                            <span id="comboCount" class="font-arcade text-lg font-black text-brand-green combo-glow">5 COMBO!</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Detection Alert Overlay Banner -->
+                <div id="cameraPrompt" class="absolute inset-0 bg-slate-950/80 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center z-20">
+                    <div class="w-16 h-16 rounded-2xl bg-brand-cyan/20 border border-brand-cyan/50 text-brand-cyan flex items-center justify-center text-3xl mb-4 animate-pulse">
+                        <i class="fa-solid fa-camera"></i>
+                    </div>
+                    <h3 class="text-xl font-bold mb-2">需要访问摄像头</h3>
+                    <p class="text-xs text-slate-400 max-w-sm mb-6">请允许浏览器开启摄像头以启用 AI 人体脚部姿态动作识别与自动计数功能。</p>
+                    <button onclick="startCamera()" class="px-6 py-3 rounded-xl bg-gradient-to-r from-brand-cyan to-brand-green text-black font-extrabold hover:opacity-90 transition shadow-neon-cyan">
+                        开启 AI 运动追踪
+                    </button>
+                </div>
+
+                <!-- Motion Kick Trigger Indicator Ripple (Visual Feedback on Canvas) -->
+                <div id="kickRipple" class="pointer-events-none absolute w-24 h-24 rounded-full border-4 border-brand-green bg-brand-green/30 scale-0 opacity-0 transition-all duration-300"></div>
+            </div>
+
+            <!-- Camera Control Bar -->
+            <div class="flex flex-wrap items-center justify-between gap-3 glass-panel p-4 rounded-2xl border border-white/10">
+                <div class="flex items-center gap-2">
+                    <button id="startBtn" onclick="toggleTracking()" class="px-5 py-2.5 rounded-xl bg-brand-cyan hover:bg-cyan-400 text-black font-extrabold transition flex items-center gap-2 text-sm">
+                        <i id="startBtnIcon" class="fa-solid fa-play"></i>
+                        <span id="startBtnText">开始运动</span>
+                    </button>
+                    <button onclick="resetCurrentSession()" class="px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-slate-200 text-sm font-semibold transition border border-white/10 flex items-center gap-1.5">
+                        <i class="fa-solid fa-rotate-right"></i> 重置
+                    </button>
+                </div>
+
+                <!-- Camera Select Selector -->
+                <div class="flex items-center gap-2">
+                    <span class="text-xs text-slate-400 font-medium hidden sm:inline"><i class="fa-solid fa-video"></i> 相机:</span>
+                    <select id="cameraSelect" onchange="switchCamera()" class="bg-black/60 border border-white/15 rounded-xl px-3 py-2 text-xs font-semibold text-slate-200 focus:outline-none focus:border-brand-cyan">
+                        <option value="user">前置摄像头 (User)</option>
+                        <option value="environment">后置摄像头 (Environment)</option>
+                    </select>
+                </div>
+            </div>
+
+        </section>
+
+
+        <!-- RIGHT/BOTTOM: Real-time Controls & Micro Settings (Col 4) -->
+        <aside class="lg:col-span-4 flex flex-col gap-5">
+            
+            <!-- Manual Counter Adjustment Card -->
+            <div class="glass-panel p-5 rounded-3xl border border-white/10 space-y-4">
+                <div class="flex justify-between items-center">
+                    <h3 class="font-bold text-sm text-slate-200 flex items-center gap-2">
+                        <i class="fa-solid fa-sliders text-brand-cyan"></i> 计数微调与纠正
+                    </h3>
+                    <span class="text-[10px] text-slate-400">若有误记可手动更正</span>
+                </div>
+
+                <div class="grid grid-cols-2 gap-3">
+                    <button onclick="adjustCount(1)" class="py-3 rounded-2xl bg-brand-cyan/15 hover:bg-brand-cyan/25 border border-brand-cyan/40 text-brand-cyan font-extrabold text-lg transition flex items-center justify-center gap-2 active:scale-95">
+                        <i class="fa-solid fa-plus"></i> +1 补计
+                    </button>
+                    <button onclick="adjustCount(-1)" class="py-3 rounded-2xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/40 text-rose-400 font-extrabold text-lg transition flex items-center justify-center gap-2 active:scale-95">
+                        <i class="fa-solid fa-minus"></i> -1 扣除
+                    </button>
+                </div>
+            </div>
+
+            <!-- AI Engine & Sensitivity Parameters -->
+            <div class="glass-panel p-5 rounded-3xl border border-white/10 space-y-5">
+                <h3 class="font-bold text-sm text-slate-200 flex items-center gap-2">
+                    <i class="fa-solid fa-microchip text-brand-green"></i> 识别算法与灵敏度
+                </h3>
+
+                <!-- Engine Selection -->
+                <div class="space-y-2">
+                    <label class="text-xs text-slate-400 flex justify-between">
+                        <span>识别引擎模式</span>
+                        <span id="engineBadge" class="text-brand-green font-semibold">MediaPipe Pose (高精度)</span>
+                    </label>
+                    <div class="grid grid-cols-2 gap-2 p-1 bg-black/40 rounded-xl border border-white/10">
+                        <button id="enginePoseBtn" onclick="setEngineMode('pose')" class="py-1.5 rounded-lg text-xs font-bold bg-brand-green text-black transition">
+                            AI 骨骼姿态
+                        </button>
+                        <button id="engineMotionBtn" onclick="setEngineMode('motion')" class="py-1.5 rounded-lg text-xs font-semibold text-slate-400 hover:text-white transition">
+                            运动轨迹帧差
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Sensitivity Slider -->
+                <div class="space-y-2">
+                    <div class="flex justify-between items-center text-xs">
+                        <span class="text-slate-400">动作抬腿高度门限 (Sens.)</span>
+                        <span id="sensValue" class="font-arcade text-brand-cyan font-bold">0.18</span>
+                    </div>
+                    <input type="range" id="sensSlider" min="0.08" max="0.30" step="0.01" value="0.18" oninput="updateSens(this.value)" class="w-full accent-brand-cyan cursor-pointer">
+                    <div class="flex justify-between text-[10px] text-slate-500">
+                        <span>宽松 (容易触发)</span>
+                        <span>严格 (高抬腿)</span>
+                    </div>
+                </div>
+
+                <!-- TTS Voice Settings -->
+                <div class="pt-3 border-t border-white/10 space-y-3">
+                    <div class="flex items-center justify-between">
+                        <span class="text-xs text-slate-300 font-semibold">真人语音朗读 (TTS)</span>
+                        <input type="checkbox" id="ttsCheckbox" checked onchange="toggleVoice(this.checked)" class="w-4 h-4 accent-brand-cyan">
+                    </div>
+                    <div class="flex items-center justify-between">
+                        <span class="text-xs text-slate-300 font-semibold">里程碑特别播报 (如: 10, 20...)</span>
+                        <input type="checkbox" id="milestoneCheckbox" checked class="w-4 h-4 accent-brand-green">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Quick Instructions / Tips -->
+            <div class="glass-panel p-5 rounded-3xl border border-white/10 space-y-2 text-xs text-slate-400">
+                <div class="font-bold text-slate-200 flex items-center gap-1.5 mb-1">
+                    <i class="fa-solid fa-lightbulb text-amber-400"></i> 使用提示
+                </div>
+                <p>1. 将手机或电脑放置在距离身体 <strong>1.5 - 2.5 米</strong> 处，保证双腿与脚踝完全出现在视野中。</p>
+                <p>2. 系统通过识别<strong>脚踝/膝盖向上快速弹起与下落周期</strong>完成一次踢毽计算。</p>
+            </div>
+
+        </aside>
+
+    </main>
+
+
+    <!-- Historical Records Modal -->
+    <div id="historyModal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-md hidden items-center justify-center p-4">
+        <div class="glass-panel w-full max-w-2xl rounded-3xl border border-white/15 p-6 space-y-6 max-h-[85vh] flex flex-col">
+            <div class="flex justify-between items-center border-b border-white/10 pb-4">
+                <div class="flex items-center gap-2">
+                    <i class="fa-solid fa-trophy text-amber-400 text-xl"></i>
+                    <h3 class="font-bold text-lg font-arcade">踢毽子运动历史纪录</h3>
+                </div>
+                <button onclick="toggleHistoryModal()" class="text-slate-400 hover:text-white text-lg px-2">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+
+            <!-- History List Table -->
+            <div class="overflow-y-auto flex-grow space-y-2">
+                <table class="w-full text-left text-xs text-slate-300">
+                    <thead class="text-slate-400 border-b border-white/10 font-bold uppercase">
+                        <tr>
+                            <th class="py-2.5 px-3">日期时间</th>
+                            <th class="py-2.5 px-3">踢毽总数</th>
+                            <th class="py-2.5 px-3">运动时长</th>
+                            <th class="py-2.5 px-3">平均频率 (个/分)</th>
+                        </tr>
+                    </thead>
+                    <tbody id="historyTableBody">
+                        <!-- History items injected via JS -->
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="pt-4 border-t border-white/10 flex justify-between items-center">
+                <button onclick="clearHistoryRecords()" class="text-xs text-rose-400 hover:text-rose-300 transition">
+                    <i class="fa-solid fa-trash"></i> 清空历史记录
+                </button>
+                <button onclick="toggleHistoryModal()" class="px-5 py-2 bg-white/10 hover:bg-white/20 rounded-xl text-xs font-semibold">
+                    关闭
+                </button>
+            </div>
+        </div>
+    </div>
+
+
+    <!-- JAVASCRIPT LOGIC ENGINE -->
+    <script>
+        /* ===================================================================
+         * APP STATE & CORE VARIABLES
+         * =================================================================== */
+        let currentCount = 0;
+        let bestRecord = parseInt(localStorage.getItem('shuttle_best_record')) || 0;
+        let isTracking = false;
+        let currentFacingMode = 'user'; // 'user' or 'environment'
+        let engineMode = 'pose'; // 'pose' or 'motion'
+
+        // Audio & Speech
+        let ttsEnabled = true;
+        let soundBfxEnabled = true;
+        let speechSynth = window.speechSynthesis;
+
+        // Timer & Metrics
+        let sessionStartTime = null;
+        let timerInterval = null;
+        let elapsedSeconds = 0;
+        let comboCount = 0;
+        let lastKickTime = 0;
+
+        // AI Detection Detection Logic Thresholds
+        let kickThreshold = 0.18; // Normalized vertical leg displacement threshold
+        let isLegUp = false;
+        let minKickIntervalMs = 350; // Debounce double counting
+
+        // FPS Calculation
+        let lastFrameTime = performance.now();
+        let frameCount = 0;
+        let currentFps = 0;
+
+        // MediaPipe Pose & Camera instances
+        let poseEngine = null;
+        let cameraInstance = null;
+        let videoElement = document.getElementById('webcamVideo');
+        let canvasElement = document.getElementById('outputCanvas');
+        let canvasCtx = canvasElement.getContext('2d');
+
+        // Motion Fallback Canvas buffer
+        let prevFrameData = null;
+
+        /* ===================================================================
+         * WEB AUDIO API SYNTHESIZER (Beeps & Sound Effects)
+         * =================================================================== */
+        let audioCtx = null;
+        function initAudioContext() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+        }
+
+        function playBeepSound(type = 'count') {
+            if (!soundBfxEnabled) return;
+            initAudioContext();
+            if (!audioCtx) return;
+
+            const now = audioCtx.currentTime;
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+
+            if (type === 'count') {
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(587.33, now); // D5
+                osc.frequency.exponentialRampToValueAtTime(880, now + 0.08); // A5
+                gain.gain.setValueAtTime(0.2, now);
+                gain.gain.linearRampToValueAtTime(0.01, now + 0.08);
+                osc.start(now);
+                osc.stop(now + 0.08);
+            } else if (type === 'milestone') {
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(523.25, now);
+                osc.frequency.setValueAtTime(659.25, now + 0.08);
+                osc.frequency.setValueAtTime(783.99, now + 0.16);
+                gain.gain.setValueAtTime(0.3, now);
+                gain.gain.linearRampToValueAtTime(0.01, now + 0.3);
+                osc.start(now);
+                osc.stop(now + 0.3);
+            }
+        }
+
+        /* ===================================================================
+         * TTS VOICE ANNOUNCER (Web Speech API)
+         * =================================================================== */
+        function speakNumber(num) {
+            if (!ttsEnabled || !('speechSynthesis' in window)) return;
+
+            // Cancel queued utterances for instant low-latency reading
+            speechSynth.cancel();
+
+            let textToSpeak = `${num}`;
+            const milestoneChecked = document.getElementById('milestoneCheckbox').checked;
+
+            // Special praise for milestones
+            if (milestoneChecked && num > 0 && num % 10 === 0) {
+                textToSpeak = `太棒了，${num}下！`;
+                playBeepSound('milestone');
+            } else {
+                playBeepSound('count');
+            }
+
+            const utterance = new SpeechSynthesisUtterance(textToSpeak);
+            utterance.lang = 'zh-CN';
+            utterance.rate = 1.3; // Slightly faster speed for rapid counting
+            utterance.pitch = 1.0;
+
+            speechSynth.speak(utterance);
+        }
+
+        function toggleVoice(enabled) {
+            if (enabled !== undefined) {
+                ttsEnabled = enabled;
+            } else {
+                ttsEnabled = !ttsEnabled;
+            }
+            document.getElementById('ttsCheckbox').checked = ttsEnabled;
+            const icon = document.getElementById('voiceIcon');
+            const btn = document.getElementById('voiceToggleBtn');
+
+            if (ttsEnabled) {
+                icon.className = 'fa-solid fa-volume-high text-lg';
+                btn.classList.add('text-brand-cyan');
+                speakNumber('语音打开');
+            } else {
+                icon.className = 'fa-solid fa-volume-xmark text-lg text-slate-500';
+                btn.classList.remove('text-brand-cyan');
+            }
+        }
+
+        function toggleSoundBfx() {
+            soundBfxEnabled = !soundBfxEnabled;
+            const icon = document.getElementById('soundIcon');
+            const btn = document.getElementById('soundBfxBtn');
+            if (soundBfxEnabled) {
+                icon.className = 'fa-solid fa-bell text-lg';
+                btn.classList.add('text-brand-green');
+                playBeepSound('count');
+            } else {
+                icon.className = 'fa-solid fa-bell-slash text-lg text-slate-500';
+                btn.classList.remove('text-brand-green');
+            }
+        }
+
+        /* ===================================================================
+         * CAMERA & MEDIAPIPE POSE INITIALIZATION
+         * =================================================================== */
+        async function startCamera() {
+            document.getElementById('cameraPrompt').classList.add('hidden');
+            document.getElementById('statusText').innerText = '正在启动 AI 引擎...';
+
+            try {
+                // Initialize MediaPipe Pose Engine
+                poseEngine = new Pose({
+                    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
+                });
+
+                poseEngine.setOptions({
+                    modelComplexity: 1,
+                    smoothLandmarks: true,
+                    enableSegmentation: false,
+                    minDetectionConfidence: 0.5,
+                    minTrackingConfidence: 0.5
+                });
+
+                poseEngine.onResults(onPoseResults);
+
+                // Setup Camera Utility
+                cameraInstance = new Camera(videoElement, {
+                    onFrame: async () => {
+                        if (engineMode === 'pose') {
+                            await poseEngine.send({ image: videoElement });
+                        } else {
+                            processMotionFallback();
+                        }
+                        calculateFPS();
+                    },
+                    width: 1280,
+                    height: 720,
+                    facingMode: currentFacingMode
+                });
+
+                await cameraInstance.start();
+                updateStatus('AI 追踪定位就绪', 'green');
+
+            } catch (err) {
+                console.error("Camera access error:", err);
+                updateStatus('摄像头访问失败', 'red');
+                alert("无法获取摄像头访问权限，请检查设置。");
+            }
+        }
+
+        function switchCamera() {
+            const select = document.getElementById('cameraSelect');
+            currentFacingMode = select.value;
+            if (cameraInstance) {
+                cameraInstance.stop();
+                startCamera();
+            }
+        }
+
+        function updateStatus(text, color = 'green') {
+            const dot = document.getElementById('statusDot');
+            const txt = document.getElementById('statusText');
+            txt.innerText = text;
+
+            if (color === 'green') {
+                dot.className = 'w-2.5 h-2.5 rounded-full bg-brand-green shadow-neon-green';
+            } else if (color === 'yellow') {
+                dot.className = 'w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse';
+            } else {
+                dot.className = 'w-2.5 h-2.5 rounded-full bg-rose-500';
+            }
+        }
+
+        /* ===================================================================
+         * KICK MOTION DETECTION ALGORITHM (POSE LANDMARKS)
+         * =================================================================== */
+        function onPoseResults(results) {
+            // Resize Canvas to Match Video
+            canvasElement.width = videoElement.videoWidth || 640;
+            canvasElement.height = videoElement.videoHeight || 480;
+
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+            if (!results.poseLandmarks) {
+                updateStatus('寻找人体目标中...', 'yellow');
+                canvasCtx.restore();
+                return;
+            }
+
+            updateStatus('正在进行肢体动作计数', 'green');
+            const landmarks = results.poseLandmarks;
+
+            // Key lower-body joint landmarks:
+            // 23: Left Hip, 24: Right Hip
+            // 25: Left Knee, 26: Right Knee
+            // 27: Left Ankle, 28: Right Ankle
+            const leftHip = landmarks[23];
+            const rightHip = landmarks[24];
+            const leftKnee = landmarks[25];
+            const rightKnee = landmarks[26];
+            const leftAnkle = landmarks[27];
+            const rightAnkle = landmarks[28];
+
+            // Draw Skeleton Keypoints & Lines Overlay
+            drawSkeleton(landmarks);
+
+            if (!isTracking) {
+                canvasCtx.restore();
+                return;
+            }
+
+            // Calculate vertical relative position of ankles relative to hip level
+            const hipY = (leftHip.y + rightHip.y) / 2;
+            
+            // Measure upward leg kick offset (Y goes downwards in canvas space)
+            const leftKickDist = hipY - leftAnkle.y;
+            const rightKickDist = hipY - rightAnkle.y;
+
+            // Also track knee lift action
+            const leftKneeLift = hipY - leftKnee.y;
+            const rightKneeLift = hipY - rightKnee.y;
+
+            const maxKickOffset = Math.max(leftKickDist, rightKickDist, leftKneeLift, rightKneeLift);
+
+            // Detection State Machine Logic:
+            // Check if foot/knee is lifted above configured threshold
+            if (maxKickOffset > -kickThreshold) {
+                if (!isLegUp) {
+                    const now = Date.now();
+                    if (now - lastKickTime > minKickIntervalMs) {
+                        // VALID KICK TRIGGERED!
+                        registerKickCount();
+                        lastKickTime = now;
+                        isLegUp = true;
+
+                        // Visual Feedback Effect
+                        triggerKickEffect(
+                            leftKickDist > rightKickDist ? leftAnkle : rightAnkle
+                        );
+                    }
+                }
+            } else {
+                // Leg lowered back down -> Reset state machine for next kick
+                isLegUp = false;
+            }
+
+            canvasCtx.restore();
+        }
+
+        /* Draw Aesthetic Skeleton on Canvas */
+        function drawSkeleton(landmarks) {
+            const connections = [
+                [23, 24], [23, 25], [24, 26], [25, 27], [26, 28] // Lower body focus
+            ];
+
+            canvasCtx.lineWidth = 4;
+            canvasCtx.strokeStyle = '#00f2fe';
+
+            connections.forEach(([i, j]) => {
+                const p1 = landmarks[i];
+                const p2 = landmarks[j];
+                if (p1 && p2 && p1.visibility > 0.5 && p2.visibility > 0.5) {
+                    canvasCtx.beginPath();
+                    canvasCtx.moveTo(p1.x * canvasElement.width, p1.y * canvasElement.height);
+                    canvasCtx.lineTo(p2.x * canvasElement.width, p2.y * canvasElement.height);
+                    canvasCtx.stroke();
+                }
+            });
+
+            // Highlight Ankle Keypoints
+            [27, 28].forEach((idx) => {
+                const pt = landmarks[idx];
+                if (pt && pt.visibility > 0.5) {
+                    canvasCtx.beginPath();
+                    canvasCtx.arc(pt.x * canvasElement.width, pt.y * canvasElement.height, 8, 0, 2 * Math.PI);
+                    canvasCtx.fillStyle = '#00ff87';
+                    canvasCtx.shadowColor = '#00ff87';
+                    canvasCtx.shadowBlur = 12;
+                    canvasCtx.fill();
+                    canvasCtx.shadowBlur = 0;
+                }
+            });
+        }
+
+        /* Trigger Kick Particle Effect */
+        function triggerKickEffect(landmark) {
+            if (!landmark) return;
+            const ripple = document.getElementById('kickRipple');
+            const x = (1 - landmark.x) * canvasElement.width; // Mirror adjustment
+            const y = landmark.y * canvasElement.height;
+
+            ripple.style.left = `${x - 48}px`;
+            ripple.style.top = `${y - 48}px`;
+            ripple.style.transform = 'scale(1.8)';
+            ripple.style.opacity = '1';
+
+            setTimeout(() => {
+                ripple.style.transform = 'scale(0)';
+                ripple.style.opacity = '0';
+            }, 300);
+        }
+
+        /* ===================================================================
+         * MOTION DIFFERENCING FALLBACK ENGINE
+         * =================================================================== */
+        function processMotionFallback() {
+            canvasElement.width = videoElement.videoWidth || 640;
+            canvasElement.height = videoElement.videoHeight || 480;
+
+            canvasCtx.drawImage(videoElement, 0, 0, canvasElement.width, canvasElement.height);
+            
+            if (!isTracking) return;
+
+            // Frame difference detection in lower section of video
+            const frame = canvasCtx.getImageData(0, canvasElement.height * 0.4, canvasElement.width, canvasElement.height * 0.6);
+            if (prevFrameData) {
+                let diff = 0;
+                for (let i = 0; i < frame.data.length; i += 16) {
+                    diff += Math.abs(frame.data[i] - prevFrameData.data[i]);
+                }
+                const motionVal = diff / (frame.data.length / 16);
+                
+                if (motionVal > (kickThreshold * 150)) {
+                    const now = Date.now();
+                    if (now - lastKickTime > minKickIntervalMs + 100) {
+                        registerKickCount();
+                        lastKickTime = now;
+                    }
+                }
+            }
+            prevFrameData = frame;
+        }
+
+        function setEngineMode(mode) {
+            engineMode = mode;
+            const poseBtn = document.getElementById('enginePoseBtn');
+            const motionBtn = document.getElementById('engineMotionBtn');
+            const badge = document.getElementById('engineBadge');
+
+            if (mode === 'pose') {
+                poseBtn.className = 'py-1.5 rounded-lg text-xs font-bold bg-brand-green text-black transition';
+                motionBtn.className = 'py-1.5 rounded-lg text-xs font-semibold text-slate-400 hover:text-white transition';
+                badge.innerText = 'MediaPipe Pose (高精度)';
+                badge.className = 'text-brand-green font-semibold';
+            } else {
+                motionBtn.className = 'py-1.5 rounded-lg text-xs font-bold bg-brand-cyan text-black transition';
+                poseBtn.className = 'py-1.5 rounded-lg text-xs font-semibold text-slate-400 hover:text-white transition';
+                badge.innerText = '动态帧差轨迹 (低算力模式)';
+                badge.className = 'text-brand-cyan font-semibold';
+            }
+        }
+
+        /* ===================================================================
+         * COUNTER & METRICS MANAGEMENT
+         * =================================================================== */
+        function registerKickCount() {
+            currentCount++;
+            
+            // Update Combo
+            const now = Date.now();
+            if (now - lastKickTime < 2500) {
+                comboCount++;
+            } else {
+                comboCount = 1;
+            }
+
+            updateCountUI();
+            speakNumber(currentCount);
+
+            // Record Best
+            if (currentCount > bestRecord) {
+                bestRecord = currentCount;
+                localStorage.setItem('shuttle_best_record', bestRecord);
+                document.getElementById('hudBest').innerText = bestRecord;
+            }
+        }
+
+        function updateCountUI() {
+            const countEl = document.getElementById('hudCount');
+            countEl.innerText = currentCount;
+
+            // Trigger Pop Scale Animation
+            countEl.classList.add('scale-110');
+            setTimeout(() => countEl.classList.remove('scale-110'), 150);
+
+            // Combo Badge UI
+            const comboBadge = document.getElementById('comboBadge');
+            const comboText = document.getElementById('comboCount');
+            if (comboCount >= 3) {
+                comboText.innerText = `${comboCount} 连击 COMBO!`;
+                comboBadge.classList.remove('hidden');
+            } else {
+                comboBadge.classList.add('hidden');
+            }
+        }
+
+        function adjustCount(delta) {
+            currentCount = Math.max(0, currentCount + delta);
+            updateCountUI();
+            if (delta > 0) {
+                speakNumber(currentCount);
+            }
+        }
+
+        function updateSens(val) {
+            kickThreshold = parseFloat(val);
+            document.getElementById('sensValue').innerText = val;
+        }
+
+        /* ===================================================================
+         * SESSION CONTROLS & TIMER
+         * =================================================================== */
+        function toggleTracking() {
+            if (!cameraInstance) {
+                startCamera();
+            }
+
+            isTracking = !isTracking;
+            const btnIcon = document.getElementById('startBtnIcon');
+            const btnText = document.getElementById('startBtnText');
+            const btn = document.getElementById('startBtn');
+
+            if (isTracking) {
+                btnText.innerText = '暂停运动';
+                btnIcon.className = 'fa-solid fa-pause';
+                btn.className = 'px-5 py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-black font-extrabold transition flex items-center gap-2 text-sm';
+                
+                if (!timerInterval) {
+                    sessionStartTime = Date.now() - (elapsedSeconds * 1000);
+                    timerInterval = setInterval(updateTimer, 1000);
+                }
+            } else {
+                btnText.innerText = '继续运动';
+                btnIcon.className = 'fa-solid fa-play';
+                btn.className = 'px-5 py-2.5 rounded-xl bg-brand-cyan hover:bg-cyan-400 text-black font-extrabold transition flex items-center gap-2 text-sm';
+                
+                clearInterval(timerInterval);
+                timerInterval = null;
+            }
+        }
+
+        function updateTimer() {
+            elapsedSeconds = Math.floor((Date.now() - sessionStartTime) / 1000);
+            const mins = String(Math.floor(elapsedSeconds / 60)).padStart(2, '0');
+            const secs = String(elapsedSeconds % 60).padStart(2, '0');
+            document.getElementById('hudTimer').innerText = `${mins}:${secs}`;
+        }
+
+        function resetCurrentSession() {
+            if (currentCount > 0 && elapsedSeconds > 2) {
+                saveHistoryRecord(currentCount, elapsedSeconds);
+            }
+
+            currentCount = 0;
+            elapsedSeconds = 0;
+            comboCount = 0;
+            isTracking = false;
+            clearInterval(timerInterval);
+            timerInterval = null;
+
+            document.getElementById('hudCount').innerText = '0';
+            document.getElementById('hudTimer').innerText = '00:00';
+            document.getElementById('comboBadge').classList.add('hidden');
+
+            const btnIcon = document.getElementById('startBtnIcon');
+            const btnText = document.getElementById('startBtnText');
+            const btn = document.getElementById('startBtn');
+            btnText.innerText = '开始运动';
+            btnIcon.className = 'fa-solid fa-play';
+            btn.className = 'px-5 py-2.5 rounded-xl bg-brand-cyan hover:bg-cyan-400 text-black font-extrabold transition flex items-center gap-2 text-sm';
+        }
+
+        /* ===================================================================
+         * FPS & HISTORY LOCALSTORAGE MANAGEMENT
+         * =================================================================== */
+        function calculateFPS() {
+            const now = performance.now();
+            frameCount++;
+            if (now - lastFrameTime >= 1000) {
+                currentFps = Math.round((frameCount * 1000) / (now - lastFrameTime));
+                document.getElementById('fpsDisplay').innerText = `FPS: ${currentFps}`;
+                frameCount = 0;
+                lastFrameTime = now;
+            }
+        }
+
+        function saveHistoryRecord(count, seconds) {
+            let history = JSON.parse(localStorage.getItem('shuttle_history_records')) || [];
+            const nowStr = new Date().toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+            const mins = Math.max(0.1, seconds / 60);
+            const rate = Math.round(count / mins);
+
+            history.unshift({
+                date: nowStr,
+                count: count,
+                duration: `${Math.floor(seconds/60)}分${seconds%60}秒`,
+                rate: rate
+            });
+
+            if (history.length > 20) history.pop();
+            localStorage.setItem('shuttle_history_records', JSON.stringify(history));
+            renderHistoryTable();
+        }
+
+        function renderHistoryTable() {
+            const tbody = document.getElementById('historyTableBody');
+            let history = JSON.parse(localStorage.getItem('shuttle_history_records')) || [];
+
+            if (history.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="4" class="py-6 text-center text-slate-500">尚无运动纪录</td></tr>`;
+                return;
+            }
+
+            tbody.innerHTML = history.map(item => `
+                <tr class="border-b border-white/5 hover:bg-white/5 transition">
+                    <td class="py-3 px-3 text-slate-300">${item.date}</td>
+                    <td class="py-3 px-3 font-arcade font-bold text-brand-cyan text-sm">${item.count} 下</td>
+                    <td class="py-3 px-3 text-slate-400">${item.duration}</td>
+                    <td class="py-3 px-3 text-brand-green font-semibold">${item.rate} 个/分</td>
+                </tr>
+            `).join('');
+        }
+
+        function clearHistoryRecords() {
+            if (confirm("确定要清空所有踢毽子历史纪录吗？")) {
+                localStorage.removeItem('shuttle_history_records');
+                renderHistoryTable();
+            }
+        }
+
+        function toggleHistoryModal() {
+            const modal = document.getElementById('historyModal');
+            if (modal.classList.contains('hidden')) {
+                renderHistoryTable();
+                modal.classList.remove('hidden');
+                modal.classList.add('flex');
+            } else {
+                modal.classList.add('hidden');
+                modal.classList.remove('flex');
+            }
+        }
+
+        // On Page Load Initialization
+        window.onload = () => {
+            document.getElementById('hudBest').innerText = bestRecord;
+            renderHistoryTable();
+        };
+    </script>
+</body>
+</html>
